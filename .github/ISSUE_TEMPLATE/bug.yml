@@ -1,0 +1,88 @@
+name: Bug or decrypt failure
+description: HLS AES-128 parse / key / TS check / save problem
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project only handles standard HLS `METHOD=AES-128` and clear MPEG-TS.
+
+        **Do not paste** cookies, `Authorization` headers, key bytes, `.key` files, HAR dumps, or full page captures.
+
+  - type: checkboxes
+    id: rights
+    attributes:
+      label: You have the right to save this media
+      options:
+        - label: I am reporting a problem with content I am allowed to save (my own stream, or a public test playlist such as oceans_aes). I am not asking for help ripping a commercial site.
+          required: true
+        - label: I will not attach cookies, keys, tokens, or full packet captures.
+          required: true
+
+  - type: dropdown
+    id: encryption
+    attributes:
+      label: Playlist encryption
+      options:
+        - AES-128 (`#EXT-X-KEY:METHOD=AES-128`)
+        - Clear / METHOD=NONE
+        - SAMPLE-AES (unsupported)
+        - fMP4 / EXT-X-MAP (unsupported)
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: public_m3u8
+    attributes:
+      label: Can the m3u8 be fetched without login?
+      options:
+        - "Yes — I will paste only the public m3u8 URL below"
+        - "No — I will describe the failure without secrets"
+        - "Using the bundled oceans_aes test stream"
+    validations:
+      required: true
+
+  - type: input
+    id: m3u8
+    attributes:
+      label: Public m3u8 URL (optional)
+      description: Only if it does not require cookies or a personal token. Example — https://playertest.longtailvideo.com/adaptive/oceans_aes/oceans_aes.m3u8
+      placeholder: https://...
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: Expected vs actual. Quote the side-panel error if there is one (safe text only).
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      value: |
+        1. Load unpacked extension
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: chrome
+    attributes:
+      label: Chrome version
+      placeholder: e.g. 129
+
+  - type: dropdown
+    id: verify
+    attributes:
+      label: Did `node scripts/verify-aes.mjs` pass on your machine?
+      options:
+        - "Yes, 7 passed"
+        - "Failed (paste the FAIL lines only, no keys)"
+        - "Did not run"
+    validations:
+      required: true

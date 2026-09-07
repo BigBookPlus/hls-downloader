@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HLS AES-128 下载器</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>HLS AES-128 下载器</h1>
+      <p class="sub">先解密再保存。不会把密文 .ts 直接拼成文件。</p>
+    </header>
+    <section class="card">
+      <label class="label" for="page-url">网页链接</label>
+      <div class="row">
+        <input id="page-url" type="url" placeholder="https://..." autocomplete="off" />
+        <button id="open-page" type="button">打开</button>
+      </div>
+      <label class="label" for="m3u8-url">或手动粘贴 m3u8</label>
+      <div class="row">
+        <input id="m3u8-url" type="url" placeholder="https://.../index.m3u8" autocomplete="off" />
+        <button id="add-m3u8" type="button">添加</button>
+      </div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <h2>检测到的流</h2>
+        <div class="row-actions">
+          <button id="refresh" type="button" class="ghost">刷新</button>
+          <button id="clear" type="button" class="ghost">清空</button>
+        </div>
+      </div>
+      <p id="page-hint" class="hint">打开视频页并开始播放，播放器请求 m3u8 后会出现在这里。</p>
+      <ul id="stream-list" class="stream-list"></ul>
+    </section>
+    <section class="card">
+      <label class="label" for="variant">清晰度</label>
+      <select id="variant" disabled>
+        <option value="">先选择一条流</option>
+      </select>
+      <label class="check">
+        <input id="save-materials" type="checkbox" />
+        同时保存材料（m3u8 与 key）
+      </label>
+      <div class="row">
+        <button id="download" type="button" class="primary" disabled>下载并解密</button>
+        <button id="stop" type="button" class="danger" disabled>停止</button>
+      </div>
+      <div id="progress-wrap" class="progress-wrap" hidden>
+        <div class="progress-bar"><span id="progress-bar"></span></div>
+        <p id="progress-text" class="hint"></p>
+      </div>
+      <p id="status" class="status" role="status"></p>
+    </section>
+    <footer class="footer">
+      仅支持 HLS <code>METHOD=AES-128</code> 与明文 TS。不支持 Widevine / SAMPLE-AES / fMP4。下载时请勿关闭侧边栏。仅用于你有权保存的内容。
+    </footer>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

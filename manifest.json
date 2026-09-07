@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "HLS AES-128 下载器",
+  "version": "1.0.0",
+  "description": "拦截页面 HLS 播放列表，按 AES-128 key/IV 解密分片后再保存，不拼接密文。",
+  "action": {},
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "webRequest",
+    "storage",
+    "cookies",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}

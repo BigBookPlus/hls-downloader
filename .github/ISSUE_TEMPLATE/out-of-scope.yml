@@ -1,0 +1,30 @@
+name: Out of scope (will be closed)
+description: Site cracking, login bypass, Widevine, SAMPLE-AES, paid features
+title: "[out-of-scope] "
+labels: ["invalid"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This tracker is not for:
+
+        - Cracking a specific website or writing a site adapter
+        - Bypassing login, paywalls, or tokens
+        - Widevine / FairPlay / PlayReady / SAMPLE-AES / fMP4
+        - Chrome Web Store listing or a paid edition
+
+        See README Acceptable use and NOTICE.md. If you have a real AES-128 bug on media you may save, use the Bug template instead.
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I understand this issue may be closed without a site-specific fix.
+          required: true
+
+  - type: textarea
+    id: note
+    attributes:
+      label: Note (optional)
+      description: Do not paste cookies, keys, or captures.
