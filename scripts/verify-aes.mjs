@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   decryptAes128Cbc,
   decryptHlsSegment,
+  looksLikeFmp4,
   looksLikeMpegTs,
   mediaSequenceIv,
   resolveSegmentIv,
@@ -59,10 +60,25 @@ c.ts
 `;
 
 const sampleMap = `#EXTM3U
-#EXT-X-MAP:URI="init.mp4"
+#EXT-X-MEDIA-SEQUENCE:9
+#EXT-X-KEY:METHOD=AES-128,URI="https://example.com/k.map.key"
+#EXT-X-MAP:URI="init.mp4",BYTERANGE="720@0"
 #EXTINF:1,
 seg.m4s
+#EXT-X-MAP:URI="init2.mp4"
+#EXTINF:1,
+seg2.m4s
 `;
+
+function makeFtypBox() {
+  const bytes = new Uint8Array(20);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 20);
+  bytes.set([0x66, 0x74, 0x79, 0x70], 4);
+  bytes.set([0x69, 0x73, 0x6f, 0x6d], 8);
+  bytes.set([0x69, 0x73, 0x6f, 0x6d], 16);
+  return bytes;
+}
 
 const failed = [];
 let passed = 0;
@@ -99,10 +115,20 @@ await test("parse AES-128 key rotation and sequence IV", () => {
   assert(p.segments[2].key.method === "NONE", "key cleared");
 });
 
-await test("reject fMP4 map playlists", () => {
+await test("parse fMP4 map playlists", () => {
   const p = parseM3u8(sampleMap, "https://cdn.example/map.m3u8");
   assert(p.hasMap, "should detect map");
-  assert(p.unsupportedReason.includes("fMP4"), p.unsupportedReason);
+  assert(!p.unsupportedReason, p.unsupportedReason);
+  assert(p.segments.length === 2, "need 2 segments");
+  assert(p.segments[0].map.url.endsWith("/init.mp4"), p.segments[0].map.url);
+  assert(p.segments[0].map.byteRange?.offset === 0, "map offset");
+  assert(p.segments[0].map.byteRange?.length === 720, "map length");
+  assert(p.segments[0].map.key.method === "AES-128", "map inherits key");
+  assert(p.segments[0].map.key.uri.endsWith("k.map.key"), p.segments[0].map.key.uri);
+  assert(p.segments[0].map.mediaSequence === 9, String(p.segments[0].map.mediaSequence));
+  assert(p.segments[1].map.url.endsWith("/init2.mp4"), p.segments[1].map.url);
+  assert(p.segments[1].map.mediaSequence === 10, String(p.segments[1].map.mediaSequence));
+  assert(looksLikeFmp4(makeFtypBox()), "ftyp fixture should look like fMP4");
 });
 
 await test("media sequence IV is 128-bit big-endian", () => {
@@ -144,10 +170,22 @@ await test("wrong key does not produce a fake TS file", async () => {
     await decryptAes128Cbc(wrong, iv, cipher);
   } catch (err) {
     threw = true;
-    assert(err.message.includes("0x47") || err.message.includes("MPEG-TS"), err.message);
+    assert(err.message.includes("MPEG-TS") || err.message.includes("fMP4"), err.message);
   }
   assert(threw, "wrong key should throw instead of writing garbage");
   assert(!looksLikeMpegTs(cipher), "do not treat ciphertext as TS");
+});
+
+await test("decrypt PKCS7 AES-128 fMP4", async () => {
+  const key = hexToBytes("00112233445566778899aabbccddeeff");
+  const iv = mediaSequenceIv(1);
+  const plain = makeFtypBox();
+  const cipher = await encryptTs(plain, key, iv);
+  assert(!looksLikeFmp4(cipher), "ciphertext must not look like fMP4");
+  const out = await decryptAes128Cbc(key, iv, cipher);
+  assert(looksLikeFmp4(out), "decrypted should be fMP4");
+  assert(out.length === plain.length, `len ${out.length} != ${plain.length}`);
+  assert(out.every((b, i) => b === plain[i]), "roundtrip mismatch");
 });
 
 const liveUrl =

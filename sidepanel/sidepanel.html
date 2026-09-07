@@ -39,6 +39,12 @@
       <select id="variant" disabled>
         <option value="">先选择一条流</option>
       </select>
+      <label class="label" for="pick-dir">默认保存目录</label>
+      <div class="row">
+        <p id="dir-label" class="hint dir-label">未设置（每次选择位置）</p>
+        <button id="pick-dir" type="button" class="ghost">选择</button>
+        <button id="clear-dir" type="button" class="ghost" disabled>清除</button>
+      </div>
       <label class="check">
         <input id="save-materials" type="checkbox" />
         同时保存材料（m3u8 与 key）
@@ -54,7 +60,7 @@
       <p id="status" class="status" role="status"></p>
     </section>
     <footer class="footer">
-      仅支持 HLS <code>METHOD=AES-128</code> 与明文 TS。不支持 Widevine / SAMPLE-AES / fMP4。下载时请勿关闭侧边栏。仅用于你有权保存的内容。
+      仅支持 HLS <code>METHOD=AES-128</code> 与明文 TS / fMP4。不支持 Widevine / SAMPLE-AES。下载时请勿关闭侧边栏。仅用于你有权保存的内容。
     </footer>
     <script type="module" src="panel.js"></script>
   </body>

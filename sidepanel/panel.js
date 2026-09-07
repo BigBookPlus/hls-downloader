@@ -1,3 +1,12 @@
+import {
+  clearDefaultDir,
+  createFileInDir,
+  dirDisplayName,
+  getAuthorizedDefaultDir,
+  loadDefaultDir,
+  materialWriterForDir,
+  pickDefaultDir,
+} from "../lib/download-dir.js";
 import { inspectStream, prepareDownload, runDownload } from "../lib/download-job.js";
 
 const els = {
@@ -10,6 +19,9 @@ const els = {
   pageHint: document.getElementById("page-hint"),
   streamList: document.getElementById("stream-list"),
   variant: document.getElementById("variant"),
+  dirLabel: document.getElementById("dir-label"),
+  pickDir: document.getElementById("pick-dir"),
+  clearDir: document.getElementById("clear-dir"),
   saveMaterials: document.getElementById("save-materials"),
   download: document.getElementById("download"),
   stop: document.getElementById("stop"),
@@ -75,9 +87,16 @@ function buildCtx(tab, state, playlistEntry) {
   };
 }
 
-function suggestedName(tab) {
+function suggestedName(tab, ext = "ts") {
   const raw = (tab?.title || "video").replace(/[\\/:*?"<>|]+/g, " ").trim() || "video";
-  return `${raw.slice(0, 60)}.ts`;
+  return `${raw.slice(0, 60)}.${ext}`;
+}
+
+function renderDirLabel(handle) {
+  const name = dirDisplayName(handle);
+  els.dirLabel.textContent = name ? name : "未设置（每次选择位置）";
+  els.dirLabel.title = name;
+  els.clearDir.disabled = !handle;
 }
 
 function renderVariants(info) {
@@ -100,10 +119,11 @@ function renderVariants(info) {
   }
   if (info?.playlist?.segments?.length) {
     const count = info.playlist.segments.length;
+    const format = info.playlist.hasMap ? " · fMP4" : "";
     const label =
       info.summary.encryption === "aes-128"
-        ? `媒体列表 · AES-128 · ${count} 分片`
-        : `媒体列表 · 明文 · ${count} 分片`;
+        ? `媒体列表 · AES-128${format} · ${count} 分片`
+        : `媒体列表 · 明文${format} · ${count} 分片`;
     els.variant.append(new Option(label, ""));
     els.variant.disabled = true;
     els.download.disabled = false;
@@ -138,7 +158,9 @@ function renderStreams(state) {
     if (info?.playlist?.segments?.length) {
       const extra = document.createElement("span");
       extra.className = "hint";
-      extra.textContent = ` ${info.playlist.segments.length} 分片`;
+      extra.textContent = info.playlist.hasMap
+        ? ` ${info.playlist.segments.length} 分片 · fMP4`
+        : ` ${info.playlist.segments.length} 分片`;
       top.append(extra);
     }
     const urlLine = document.createElement("div");
@@ -204,9 +226,17 @@ async function selectStream(url) {
   else setStatus("已选择流。确认清晰度后即可下载。");
 }
 
-async function createOutput(saveMaterials, filename) {
+async function createOutput(saveMaterials, filename, ext = "ts", authorizedDir = null) {
+  if (authorizedDir) {
+    const created = await createFileInDir(authorizedDir, filename);
+    return {
+      writable: created.writable,
+      fileHandle: created.fileHandle,
+      materialWriter: saveMaterials ? materialWriterForDir(authorizedDir) : null,
+    };
+  }
   if (saveMaterials) {
-    const dir = await window.showDirectoryPicker();
+    const dir = await window.showDirectoryPicker({ id: "hls-default-dir", mode: "readwrite" });
     const fileHandle = await dir.getFileHandle(filename, { create: true });
     const writable = await fileHandle.createWritable();
     return {
@@ -228,9 +258,13 @@ async function createOutput(saveMaterials, filename) {
       },
     };
   }
+  const types =
+    ext === "mp4"
+      ? [{ description: "MPEG-4", accept: { "video/mp4": [".mp4"] } }]
+      : [{ description: "MPEG-TS", accept: { "video/mp2t": [".ts"] } }];
   const fileHandle = await window.showSaveFilePicker({
     suggestedName: filename,
-    types: [{ description: "MPEG-TS", accept: { "video/mp2t": [".ts"] } }],
+    types,
   });
   return {
     writable: await fileHandle.createWritable(),
@@ -293,6 +327,23 @@ els.streamList.addEventListener("click", async (event) => {
   await selectStream(button.dataset.url);
 });
 
+els.pickDir.addEventListener("click", async () => {
+  try {
+    const handle = await pickDefaultDir();
+    renderDirLabel(handle);
+    setStatus(`已设置默认目录：${dirDisplayName(handle)}`);
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    setStatus(err.message || String(err), "error");
+  }
+});
+
+els.clearDir.addEventListener("click", async () => {
+  await clearDefaultDir();
+  renderDirLabel(null);
+  setStatus("已清除默认目录。下次下载会再选择位置。");
+});
+
 els.download.addEventListener("click", async () => {
   if (!selectedUrl) {
     setStatus("请先选择一条流。", "error");
@@ -311,11 +362,30 @@ els.download.addEventListener("click", async () => {
   els.stop.disabled = false;
   els.progressWrap.hidden = false;
   els.progressBar.style.width = "0%";
-  setStatus("正在校验首个分片（先解密，确认是 MPEG-TS）…");
+  setStatus("正在准备保存位置…");
+  let authorizedDir = null;
+  try {
+    authorizedDir = await getAuthorizedDefaultDir();
+    if (!authorizedDir) renderDirLabel(null);
+  } catch {
+    authorizedDir = null;
+    renderDirLabel(null);
+  }
+  setStatus("正在校验首个分片（先解密，确认是 MPEG-TS 或 fMP4）…");
   try {
     const prepared = await prepareDownload(selectedUrl, els.variant.value || "", ctx);
-    setStatus("首片已解密并通过 MPEG-TS 校验，请选择保存位置…");
-    const output = await createOutput(els.saveMaterials.checked, suggestedName(tab));
+    const ext = prepared.media.playlist.hasMap ? "mp4" : "ts";
+    setStatus(
+      authorizedDir
+        ? `首片已通过校验，正在保存到 ${dirDisplayName(authorizedDir)}…`
+        : "首片已解密并通过校验，请选择保存位置…"
+    );
+    const output = await createOutput(
+      els.saveMaterials.checked,
+      suggestedName(tab, ext),
+      ext,
+      authorizedDir
+    );
     writable = output.writable;
     fileHandle = output.fileHandle;
     const result = await runDownload({
@@ -335,8 +405,9 @@ els.download.addEventListener("click", async () => {
     });
     await writable.close();
     writable = null;
+    const dest = authorizedDir ? `，已写入 ${dirDisplayName(authorizedDir)}` : "";
     setStatus(
-      `完成：已解密 ${result.segmentCount} 个分片，写出 ${formatBytes(result.writtenBytes)}（${result.encryption}）。可用本地播放器打开 .ts。`,
+      `完成：已解密 ${result.segmentCount} 个分片，写出 ${formatBytes(result.writtenBytes)}（${result.encryption}）${dest}。可用本地播放器打开 .${ext}。`,
       "ok"
     );
   } catch (err) {
@@ -379,5 +450,6 @@ chrome.tabs.onActivated.addListener(async (info) => {
   }
 });
 
+renderDirLabel(await loadDefaultDir());
 await refresh(true);
 setStatus("准备就绪。在视频页点播放后，点刷新以捕获 m3u8。");

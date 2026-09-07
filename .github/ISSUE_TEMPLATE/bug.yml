@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        This project only handles standard HLS `METHOD=AES-128` and clear MPEG-TS.
+        This project only handles standard HLS `METHOD=AES-128` and clear MPEG-TS or fMP4 (`#EXT-X-MAP`).
 
         **Do not paste** cookies, `Authorization` headers, key bytes, `.key` files, HAR dumps, or full page captures.
 
@@ -28,7 +28,7 @@ body:
         - AES-128 (`#EXT-X-KEY:METHOD=AES-128`)
         - Clear / METHOD=NONE
         - SAMPLE-AES (unsupported)
-        - fMP4 / EXT-X-MAP (unsupported)
+        - fMP4 / EXT-X-MAP (AES-128 or clear)
         - Unknown
     validations:
       required: true
@@ -81,7 +81,7 @@ body:
     attributes:
       label: Did `node scripts/verify-aes.mjs` pass on your machine?
       options:
-        - "Yes, 7 passed"
+        - "Yes, all passed"
         - "Failed (paste the FAIL lines only, no keys)"
         - "Did not run"
     validations:

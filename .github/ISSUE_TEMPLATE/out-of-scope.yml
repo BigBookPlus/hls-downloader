@@ -10,7 +10,7 @@ body:
 
         - Cracking a specific website or writing a site adapter
         - Bypassing login, paywalls, or tokens
-        - Widevine / FairPlay / PlayReady / SAMPLE-AES / fMP4
+        - Widevine / FairPlay / PlayReady / SAMPLE-AES
         - Chrome Web Store listing or a paid edition
 
         See README Acceptable use and NOTICE.md. If you have a real AES-128 bug on media you may save, use the Bug template instead.

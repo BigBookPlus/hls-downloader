@@ -18,8 +18,8 @@ Chrome Manifest V3 侧边栏：拦截页面 HLS，按 `#EXT-X-KEY:METHOD=AES-128
 ## 故意不做
 
 - Widevine / FairPlay / PlayReady / `SAMPLE-AES`
-- fMP4 / `#EXT-X-MAP`
-- 浏览器内转 MP4（解密后的 `.ts` 可直接播；若要 mp4，用本机 `ffmpeg -i video.ts -c copy video.mp4`，不要对密文 remux）
+- 浏览器内把 TS / fMP4 重封装成 progressive MP4（解密后的 `.ts` / 拼接后的 fragmented `.mp4` 可直接播；若要普通 mp4，用本机 `ffmpeg -i video.ts -c copy video.mp4` 或 `ffmpeg -i video.mp4 -c copy out.mp4`，不要对密文 remux）
+- 把分离的音视频 rendition（`#EXT-X-MEDIA`）混流
 - Chrome Web Store 上架、付费墙、预置「版权域名黑名单」
 
 ## 加载
@@ -31,9 +31,11 @@ Chrome Manifest V3 侧边栏：拦截页面 HLS，按 `#EXT-X-KEY:METHOD=AES-128
 5. 点击扩展图标打开侧边栏
 6. 选流 / 清晰度，点 **下载并解密**
 7. 下载过程中不要关闭侧边栏
-8. 用 VLC / PotPlayer 打开保存的 `.ts`
+8. 用 VLC / PotPlayer 打开保存的 `.ts` 或 fragmented `.mp4`
 
-也可以在侧边栏粘贴网页链接或 m3u8。勾选 **同时保存材料** 并选文件夹时，会额外写下 `source.m3u8` 和 `key.bin`。
+也可以在侧边栏粘贴网页链接或 m3u8。勾选 **同时保存材料** 时，会额外写下 `source.m3u8` 和 `key.bin`。
+
+可先点 **选择** 设默认保存文件夹，之后下载不再弹选择器。浏览器只显示文件夹名，不能填写盘符路径；重启 Chrome 后可能要再点一次权限。未设置或权限失效时仍会弹出保存位置。同名文件会自动改成 `title (2).ts`，避免覆盖。
 
 ## 它做什么
 
@@ -41,8 +43,9 @@ Chrome Manifest V3 侧边栏：拦截页面 HLS，按 `#EXT-X-KEY:METHOD=AES-128
 - 解析主播放列表，让你选码率
 - 下载 16 字节 AES-128 key
 - 按分片做 AES-128-CBC：有 `IV=0x...` 用它，否则用 media sequence 作为 128-bit 大端 IV
-- 校验解密结果是 MPEG-TS（`0x47`，188 字节对齐）后再按序写入
-- 首片先解密通过，再弹出保存对话框
+- 校验解密结果是 MPEG-TS（`0x47`，188 字节对齐）或 fMP4（`ftyp` / `moof` 等 box）后再按序写入
+- 遇到 `#EXT-X-MAP` 时先写入 init，再拼接 `.m4s` 分片，输出 fragmented MP4
+- 首片（及 init）先解密通过；已设默认目录则直接写入，否则再弹出保存对话框
 
 ## 权限为何需要
 
@@ -72,7 +75,7 @@ Chrome Manifest V3 侧边栏：拦截页面 HLS，按 `#EXT-X-KEY:METHOD=AES-128
 node scripts/verify-aes.mjs
 ```
 
-会检查播放列表解析、sequence IV、PKCS7 AES-128 往返，以及错误 key 不能通过 TS 校验。默认还会拉公开的 `oceans_aes` 样例，确认解密后第一字节是 `0x47`。指定其它列表：
+会检查播放列表解析（含 `#EXT-X-MAP`）、sequence IV、PKCS7 AES-128 往返（TS 与 fMP4），以及错误 key 不能通过容器校验。默认还会拉公开的 `oceans_aes` 样例，确认解密后第一字节是 `0x47`。指定其它列表：
 
 ```bash
 set HLS_AES_TEST_URL=https://example.com/index.m3u8

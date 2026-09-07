@@ -87,6 +87,16 @@ select {
   min-width: 0;
 }
 
+.dir-label {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 7px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 input,
 select,
 button {

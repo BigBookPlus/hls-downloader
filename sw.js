@@ -48,7 +48,10 @@ function isKeyOrMediaUrl(url) {
       path.endsWith(".key") ||
       path.endsWith(".ts") ||
       path.endsWith(".m4s") ||
+      path.endsWith(".mp4") ||
       path.endsWith(".cmfv") ||
+      path.endsWith(".cmfa") ||
+      path.endsWith(".cmfd") ||
       /\/key(?:$|\.)/.test(path)
     );
   } catch {
