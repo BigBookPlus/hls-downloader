@@ -25,20 +25,109 @@ const els = {
   saveMaterials: document.getElementById("save-materials"),
   download: document.getElementById("download"),
   stop: document.getElementById("stop"),
+  otherJobs: document.getElementById("other-jobs"),
   progressWrap: document.getElementById("progress-wrap"),
   progressBar: document.getElementById("progress-bar"),
   progressText: document.getElementById("progress-text"),
   status: document.getElementById("status"),
 };
 
-const inspected = new Map();
-let selectedUrl = "";
-let abortController = null;
+const views = new Map();
+const jobs = new Map();
 let activeTabId = null;
+let paintedTabId = null;
+let paintGen = 0;
 
-function setStatus(text, kind = "") {
-  els.status.textContent = text;
-  els.status.className = `status ${kind}`.trim();
+function emptyView() {
+  return {
+    inspected: new Map(),
+    selectedUrl: "",
+    variantUrl: "",
+    pageUrl: "",
+    m3u8Url: "",
+    playlists: [],
+    statePageUrl: "",
+    status: "",
+    statusKind: "",
+    progressHidden: true,
+    progressPct: 0,
+    progressText: "",
+  };
+}
+
+function getView(tabId) {
+  if (tabId == null) return emptyView();
+  if (!views.has(tabId)) views.set(tabId, emptyView());
+  return views.get(tabId);
+}
+
+function snapshotView(tabId) {
+  if (tabId == null || tabId !== paintedTabId || !views.has(tabId)) return;
+  const view = views.get(tabId);
+  view.pageUrl = els.pageUrl.value;
+  view.m3u8Url = els.m3u8Url.value;
+  view.variantUrl = els.variant.value || view.variantUrl;
+  view.status = els.status.textContent;
+  view.statusKind = els.status.className.replace(/^status\s*/, "").trim();
+  view.progressHidden = els.progressWrap.hidden;
+  view.progressPct = Number.parseInt(els.progressBar.style.width, 10) || 0;
+  view.progressText = els.progressText.textContent;
+}
+
+function setStatus(text, kind = "", tabId = activeTabId) {
+  if (tabId != null) {
+    const view = getView(tabId);
+    view.status = text;
+    view.statusKind = kind;
+  }
+  if (tabId === activeTabId) {
+    els.status.textContent = text;
+    els.status.className = `status ${kind}`.trim();
+  }
+}
+
+function applyStatus(view) {
+  els.status.textContent = view.status;
+  els.status.className = `status ${view.statusKind}`.trim();
+}
+
+function setProgress(tabId, patch) {
+  const view = getView(tabId);
+  if (patch.hidden !== undefined) view.progressHidden = patch.hidden;
+  if (patch.pct !== undefined) view.progressPct = patch.pct;
+  if (patch.text !== undefined) view.progressText = patch.text;
+  if (tabId === activeTabId) applyProgress(view);
+}
+
+function applyProgress(view) {
+  els.progressWrap.hidden = view.progressHidden;
+  els.progressBar.style.width = `${view.progressPct}%`;
+  els.progressText.textContent = view.progressText;
+}
+
+function canStartDownload(tabId) {
+  if (jobs.has(tabId)) return false;
+  const view = getView(tabId);
+  const info = view.inspected.get(view.selectedUrl);
+  if (!info || info.error) return false;
+  return Boolean(info.variants?.length || info.playlist?.segments?.length);
+}
+
+function applyJobButtons(tabId = activeTabId) {
+  if (tabId !== activeTabId) return;
+  els.download.disabled = !canStartDownload(tabId);
+  els.stop.disabled = !jobs.has(tabId);
+}
+
+function updateOtherJobsHint() {
+  const others = [...jobs.keys()].filter((id) => id !== activeTabId).length;
+  if (others <= 0) {
+    els.otherJobs.hidden = true;
+    els.otherJobs.textContent = "";
+    return;
+  }
+  els.otherJobs.hidden = false;
+  els.otherJobs.textContent = `另有 ${others} 个标签页正在下载`;
 }
 
 function formatBytes(n) {
@@ -77,13 +166,13 @@ async function send(type, payload = {}) {
   return chrome.runtime.sendMessage({ type, ...payload });
 }
 
-function buildCtx(tab, state, playlistEntry) {
+function buildCtx(tab, state, playlistEntry, tabId = tab.id) {
   return {
     tabId: tab.id,
     pageUrl: state.pageUrl || tab.url || "",
     capturedHeaders: playlistEntry?.requestHeaders || {},
     hostHeaders: state.hostHeaders || {},
-    signal: abortController?.signal,
+    signal: jobs.get(tabId)?.controller?.signal,
   };
 }
 
@@ -99,22 +188,50 @@ function renderDirLabel(handle) {
   els.clearDir.disabled = !handle;
 }
 
-function renderVariants(info) {
+function paintShell(tabId) {
+  const view = getView(tabId);
+  if (!view.status) {
+    view.status = "准备就绪。在视频页点播放后，点刷新以捕获 m3u8。";
+  }
+  paintedTabId = tabId;
+  els.pageUrl.value = view.pageUrl;
+  els.m3u8Url.value = view.m3u8Url;
+  renderStreams({ playlists: view.playlists, pageUrl: view.statePageUrl || view.pageUrl }, view);
+  renderVariants(view.inspected.get(view.selectedUrl), view);
+  applyStatus(view);
+  applyProgress(view);
+  applyJobButtons(tabId);
+  updateOtherJobsHint();
+}
+
+function switchActiveTab(nextId) {
+  if (activeTabId === nextId) return;
+  snapshotView(activeTabId);
+  activeTabId = nextId;
+  paintGen += 1;
+  paintShell(nextId);
+}
+
+function renderVariants(info, view = getView(activeTabId)) {
   els.variant.innerHTML = "";
   if (info?.error) {
     els.variant.disabled = true;
     els.variant.append(new Option(info.error, ""));
-    els.download.disabled = true;
+    applyJobButtons();
     return;
   }
   if (info?.variants?.length) {
     for (const variant of info.variants) {
       els.variant.append(new Option(variant.label, variant.url));
     }
-    const chosen = info.defaultVariant?.url || info.variants[0].url;
+    const chosen =
+      view.variantUrl && info.variants.some((v) => v.url === view.variantUrl)
+        ? view.variantUrl
+        : info.defaultVariant?.url || info.variants[0].url;
     els.variant.value = chosen;
+    view.variantUrl = chosen;
     els.variant.disabled = false;
-    els.download.disabled = false;
+    applyJobButtons();
     return;
   }
   if (info?.playlist?.segments?.length) {
@@ -126,15 +243,15 @@ function renderVariants(info) {
         : `媒体列表 · 明文${format} · ${count} 分片`;
     els.variant.append(new Option(label, ""));
     els.variant.disabled = true;
-    els.download.disabled = false;
+    applyJobButtons();
     return;
   }
   els.variant.append(new Option("没有可下载的分片", ""));
   els.variant.disabled = true;
-  els.download.disabled = true;
+  applyJobButtons();
 }
 
-function renderStreams(state) {
+function renderStreams(state, view = getView(activeTabId)) {
   els.streamList.innerHTML = "";
   const playlists = state.playlists || [];
   if (!playlists.length) {
@@ -143,12 +260,12 @@ function renderStreams(state) {
   }
   els.pageHint.textContent = `当前页：${state.pageUrl || "未知"}`;
   for (const item of playlists) {
-    const info = inspected.get(item.url);
+    const info = view.inspected.get(item.url);
     const badge = encryptionBadge(info);
     const li = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `stream${item.url === selectedUrl ? " active" : ""}`;
+    button.className = `stream${item.url === view.selectedUrl ? " active" : ""}`;
     button.dataset.url = item.url;
     const top = document.createElement("div");
     const mark = document.createElement("span");
@@ -178,52 +295,90 @@ function renderStreams(state) {
   }
 }
 
-async function inspectOne(url, ctx) {
+async function inspectOne(url, ctx, tabId = activeTabId) {
+  const view = getView(tabId);
   try {
     const info = await inspectStream(url, ctx);
-    inspected.set(url, info);
+    view.inspected.set(url, info);
     return info;
   } catch (err) {
     const info = { url, error: err.message || String(err) };
-    inspected.set(url, info);
+    view.inspected.set(url, info);
     return info;
   }
 }
 
-async function refresh(inspectAll = true) {
-  const tab = await currentTab();
-  if (!tab?.id) {
+function shouldPaint(tabId, gen) {
+  return tabId === activeTabId && gen === paintGen;
+}
+
+async function loadTabUi(tab, inspectAll) {
+  const tabId = tab.id;
+  if (tabId === activeTabId) paintGen += 1;
+  const gen = paintGen;
+  const view = getView(tabId);
+  if (tab.url && !view.pageUrl) view.pageUrl = tab.url;
+  if (!view.status) {
+    view.status = "准备就绪。在视频页点播放后，点刷新以捕获 m3u8。";
+  }
+  const reply = await send("getTabState", { tabId });
+  if (tabId === activeTabId && gen !== paintGen) return;
+  const state = reply?.state || { playlists: [], hostHeaders: {}, pageUrl: tab.url || "" };
+  const playlists = state.playlists || [];
+  if (!playlists.length) {
+    view.inspected.clear();
+    view.selectedUrl = "";
+    view.variantUrl = "";
+    if (tab.url) view.pageUrl = tab.url;
+  }
+  view.playlists = playlists;
+  view.statePageUrl = state.pageUrl || tab.url || "";
+  for (const item of playlists) {
+    if (!inspectAll && view.inspected.has(item.url)) continue;
+    if (tabId === activeTabId && gen !== paintGen) return;
+    await inspectOne(item.url, buildCtx(tab, state, item, tabId), tabId);
+    if (shouldPaint(tabId, gen)) paintShell(tabId);
+  }
+  if (view.selectedUrl && !playlists.some((p) => p.url === view.selectedUrl)) {
+    view.selectedUrl = "";
+  }
+  if (!view.selectedUrl && playlists[0]) view.selectedUrl = playlists[0].url;
+  if (!shouldPaint(tabId, gen)) return;
+  paintShell(tabId);
+}
+
+async function refresh(inspectAll = true, tabId = activeTabId) {
+  if (tabId == null) {
+    const tab = await currentTab();
+    tabId = tab?.id;
+  }
+  if (tabId == null) {
     setStatus("找不到当前标签页。", "error");
     return;
   }
-  activeTabId = tab.id;
-  if (tab.url && !els.pageUrl.value) els.pageUrl.value = tab.url;
-  const reply = await send("getTabState", { tabId: tab.id });
-  const state = reply?.state || { playlists: [], hostHeaders: {}, pageUrl: tab.url || "" };
-  if (inspectAll) {
-    for (const item of state.playlists || []) {
-      await inspectOne(item.url, buildCtx(tab, state, item));
-    }
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await loadTabUi(tab, inspectAll);
+  } catch {
+    if (activeTabId === tabId) setStatus("找不到当前标签页。", "error", tabId);
   }
-  if (selectedUrl && !(state.playlists || []).some((p) => p.url === selectedUrl)) {
-    selectedUrl = "";
-  }
-  if (!selectedUrl && state.playlists?.[0]) selectedUrl = state.playlists[0].url;
-  renderStreams(state);
-  renderVariants(inspected.get(selectedUrl));
 }
 
 async function selectStream(url) {
-  selectedUrl = url;
   const tab = await currentTab();
+  if (!tab?.id) return;
+  const view = getView(tab.id);
+  view.selectedUrl = url;
+  view.variantUrl = "";
   const reply = await send("getTabState", { tabId: tab.id });
   const state = reply?.state || {};
   const entry = (state.playlists || []).find((p) => p.url === url);
-  const info = inspected.get(url) || (await inspectOne(url, buildCtx(tab, state, entry)));
-  renderStreams(state);
-  renderVariants(info);
-  if (info.error) setStatus(info.error, "error");
-  else setStatus("已选择流。确认清晰度后即可下载。");
+  const info = view.inspected.get(url) || (await inspectOne(url, buildCtx(tab, state, entry, tab.id), tab.id));
+  if (activeTabId !== tab.id) return;
+  renderStreams(state, view);
+  renderVariants(info, view);
+  if (info.error) setStatus(info.error, "error", tab.id);
+  else setStatus("已选择流。确认清晰度后即可下载。", "", tab.id);
 }
 
 async function createOutput(saveMaterials, filename, ext = "ts", authorizedDir = null) {
@@ -281,6 +436,28 @@ async function removeIncomplete(fileHandle) {
   }
 }
 
+async function abortJobFiles(job) {
+  if (job.writable) {
+    try {
+      await job.writable.abort();
+    } catch {
+      try {
+        await job.writable.close();
+      } catch {
+        // ignore
+      }
+    }
+    job.writable = null;
+  }
+  if (job.wrote) await removeIncomplete(job.fileHandle);
+}
+
+function finishJob(tabId, job) {
+  if (jobs.get(tabId) === job) jobs.delete(tabId);
+  applyJobButtons(tabId);
+  updateOtherJobsHint();
+}
+
 els.openPage.addEventListener("click", async () => {
   const value = els.pageUrl.value.trim();
   if (!value) {
@@ -289,7 +466,8 @@ els.openPage.addEventListener("click", async () => {
   }
   const tab = await currentTab();
   await chrome.tabs.update(tab.id, { url: value });
-  setStatus("已打开页面。请开始播放，然后点刷新。");
+  getView(tab.id).pageUrl = value;
+  setStatus("已打开页面。请开始播放，然后点刷新。", "", tab.id);
 });
 
 els.addM3u8.addEventListener("click", async () => {
@@ -299,32 +477,44 @@ els.addM3u8.addEventListener("click", async () => {
     return;
   }
   const tab = await currentTab();
+  const view = getView(tab.id);
+  view.m3u8Url = url;
   await send("addManualPlaylist", { tabId: tab.id, url });
-  selectedUrl = url;
-  await refresh(true);
+  view.selectedUrl = url;
+  await refresh(true, tab.id);
   await selectStream(url);
 });
 
 els.refresh.addEventListener("click", async () => {
-  setStatus("正在解析播放列表…");
-  await refresh(true);
-  setStatus("已刷新。");
+  const tabId = activeTabId;
+  setStatus("正在解析播放列表…", "", tabId);
+  await refresh(true, tabId);
+  if (activeTabId === tabId) setStatus("已刷新。", "", tabId);
 });
 
 els.clear.addEventListener("click", async () => {
   const tab = await currentTab();
   await send("clearTabPlaylists", { tabId: tab.id });
-  inspected.clear();
-  selectedUrl = "";
-  renderVariants(null);
-  await refresh(false);
-  setStatus("已清空当前标签页的检测记录。");
+  const view = getView(tab.id);
+  view.inspected.clear();
+  view.selectedUrl = "";
+  view.variantUrl = "";
+  view.playlists = [];
+  view.statePageUrl = "";
+  if (activeTabId === tab.id) paintShell(tab.id);
+  await refresh(false, tab.id);
+  setStatus("已清空当前标签页的检测记录。", "", tab.id);
 });
 
 els.streamList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-url]");
   if (!button) return;
   await selectStream(button.dataset.url);
+});
+
+els.variant.addEventListener("change", () => {
+  if (activeTabId == null) return;
+  getView(activeTabId).variantUrl = els.variant.value;
 });
 
 els.pickDir.addEventListener("click", async () => {
@@ -345,24 +535,36 @@ els.clearDir.addEventListener("click", async () => {
 });
 
 els.download.addEventListener("click", async () => {
-  if (!selectedUrl) {
-    setStatus("请先选择一条流。", "error");
+  const tab = await currentTab();
+  if (!tab?.id) {
+    setStatus("找不到当前标签页。", "error");
     return;
   }
-  const tab = await currentTab();
+  const view = getView(tab.id);
+  if (!view.selectedUrl) {
+    setStatus("请先选择一条流。", "error", tab.id);
+    return;
+  }
+  if (jobs.has(tab.id)) {
+    setStatus("该标签页已有下载任务。", "error", tab.id);
+    return;
+  }
+  const variantUrl = els.variant.value || view.variantUrl || "";
   const reply = await send("getTabState", { tabId: tab.id });
   const state = reply?.state || {};
-  const entry = (state.playlists || []).find((p) => p.url === selectedUrl);
-  abortController = new AbortController();
-  const ctx = buildCtx(tab, state, entry);
-  let writable = null;
-  let fileHandle = null;
-  let wrote = false;
-  els.download.disabled = true;
-  els.stop.disabled = false;
-  els.progressWrap.hidden = false;
-  els.progressBar.style.width = "0%";
-  setStatus("正在准备保存位置…");
+  const entry = (state.playlists || []).find((p) => p.url === view.selectedUrl);
+  const job = {
+    controller: new AbortController(),
+    writable: null,
+    fileHandle: null,
+    wrote: false,
+  };
+  jobs.set(tab.id, job);
+  applyJobButtons(tab.id);
+  updateOtherJobsHint();
+  setProgress(tab.id, { hidden: false, pct: 0, text: "" });
+  const ctx = buildCtx(tab, state, entry, tab.id);
+  setStatus("正在准备保存位置…", "", tab.id);
   let authorizedDir = null;
   try {
     authorizedDir = await getAuthorizedDefaultDir();
@@ -371,14 +573,16 @@ els.download.addEventListener("click", async () => {
     authorizedDir = null;
     renderDirLabel(null);
   }
-  setStatus("正在校验首个分片（先解密，确认是 MPEG-TS 或 fMP4）…");
+  setStatus("正在校验首个分片（先解密，确认是 MPEG-TS 或 fMP4）…", "", tab.id);
   try {
-    const prepared = await prepareDownload(selectedUrl, els.variant.value || "", ctx);
+    const prepared = await prepareDownload(view.selectedUrl, variantUrl, ctx);
     const ext = prepared.media.playlist.hasMap ? "mp4" : "ts";
     setStatus(
       authorizedDir
         ? `首片已通过校验，正在保存到 ${dirDisplayName(authorizedDir)}…`
-        : "首片已解密并通过校验，请选择保存位置…"
+        : "首片已解密并通过校验，请选择保存位置…",
+      "",
+      tab.id
     );
     const output = await createOutput(
       els.saveMaterials.checked,
@@ -386,70 +590,101 @@ els.download.addEventListener("click", async () => {
       ext,
       authorizedDir
     );
-    writable = output.writable;
-    fileHandle = output.fileHandle;
+    job.writable = output.writable;
+    job.fileHandle = output.fileHandle;
     const result = await runDownload({
-      playlistUrl: selectedUrl,
-      variantUrl: els.variant.value || "",
+      playlistUrl: view.selectedUrl,
+      variantUrl,
       ctx,
-      writable,
+      writable: job.writable,
       prepared,
       materialWriter: output.materialWriter,
       saveMaterials: els.saveMaterials.checked,
       onProgress: (p) => {
-        wrote = true;
+        if (jobs.get(tab.id) !== job) return;
+        job.wrote = true;
         const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
-        els.progressBar.style.width = `${pct}%`;
-        els.progressText.textContent = `${p.message} · ${formatBytes(p.writtenBytes)}`;
+        setProgress(tab.id, {
+          hidden: false,
+          pct,
+          text: `${p.message} · ${formatBytes(p.writtenBytes)}`,
+        });
       },
     });
-    await writable.close();
-    writable = null;
+    await job.writable.close();
+    job.writable = null;
     const dest = authorizedDir ? `，已写入 ${dirDisplayName(authorizedDir)}` : "";
+    setProgress(tab.id, { hidden: false, pct: 100 });
     setStatus(
       `完成：已解密 ${result.segmentCount} 个分片，写出 ${formatBytes(result.writtenBytes)}（${result.encryption}）${dest}。可用本地播放器打开 .${ext}。`,
-      "ok"
+      "ok",
+      tab.id
     );
   } catch (err) {
-    if (writable) {
-      try {
-        await writable.abort();
-      } catch {
-        try {
-          await writable.close();
-        } catch {
-          // ignore
-        }
-      }
-    }
-    if (wrote) await removeIncomplete(fileHandle);
-    setStatus(err.message || String(err), "error");
+    await abortJobFiles(job);
+    setStatus(err.message || String(err), "error", tab.id);
   } finally {
-    abortController = null;
-    els.stop.disabled = true;
-    els.download.disabled = !selectedUrl;
+    finishJob(tab.id, job);
   }
 });
 
 els.stop.addEventListener("click", () => {
-  abortController?.abort();
-  setStatus("正在停止…");
+  const job = jobs.get(activeTabId);
+  if (!job) return;
+  job.controller.abort();
+  setStatus("正在停止…", "", activeTabId);
 });
 
 chrome.storage.session.onChanged.addListener(async (changes) => {
-  if (!activeTabId) return;
-  if (!changes[`tab_${activeTabId}`]) return;
-  await refresh(false);
+  const tabId = activeTabId;
+  if (!tabId) return;
+  if (!changes[`tab_${tabId}`]) return;
+  await refresh(false, tabId);
 });
 
 chrome.tabs.onActivated.addListener(async (info) => {
-  if (info.tabId !== activeTabId) {
-    inspected.clear();
-    selectedUrl = "";
-    await refresh(true);
+  if (info.tabId === activeTabId) return;
+  switchActiveTab(info.tabId);
+  try {
+    const tab = await chrome.tabs.get(info.tabId);
+    await loadTabUi(tab, false);
+  } catch {
+    setStatus("找不到当前标签页。", "error", info.tabId);
+    applyJobButtons(info.tabId);
+    updateOtherJobsHint();
   }
 });
 
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const job = jobs.get(tabId);
+  if (job) {
+    job.controller.abort();
+    jobs.delete(tabId);
+    abortJobFiles(job).catch(() => {});
+  }
+  views.delete(tabId);
+  if (activeTabId === tabId) activeTabId = null;
+  if (paintedTabId === tabId) paintedTabId = null;
+  updateOtherJobsHint();
+});
+
+els.pageUrl.addEventListener("input", () => {
+  if (activeTabId != null) getView(activeTabId).pageUrl = els.pageUrl.value;
+});
+
+els.m3u8Url.addEventListener("input", () => {
+  if (activeTabId != null) getView(activeTabId).m3u8Url = els.m3u8Url.value;
+});
+
 renderDirLabel(await loadDefaultDir());
-await refresh(true);
-setStatus("准备就绪。在视频页点播放后，点刷新以捕获 m3u8。");
+{
+  const tab = await currentTab();
+  if (tab?.id) {
+    activeTabId = tab.id;
+    paintGen += 1;
+    paintShell(tab.id);
+    await loadTabUi(tab, true);
+  } else {
+    setStatus("找不到当前标签页。", "error");
+  }
+}

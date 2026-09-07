@@ -190,6 +190,10 @@ button:disabled {
   border-color: var(--danger);
 }
 
+.other-jobs {
+  margin: 8px 0 0;
+}
+
 .progress-wrap {
   margin-top: 10px;
 }
